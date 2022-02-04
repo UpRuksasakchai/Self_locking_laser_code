@@ -2,6 +2,11 @@
 #include <MovingAverageFilter.h>
 #include <stdint.h>
 #include <math.h>
+#define SYSRESETREQ    (1<<2)
+#define VECTKEY        (0x05fa0000UL)
+#define VECTKEY_MASK   (0x0000ffffUL)
+#define AIRCR          (*(uint32_t*)0xe000ed0cUL) // fixed arch-defined address
+#define REQUEST_EXTERNAL_RESET (AIRCR=(AIRCR&VECTKEY_MASK)|VECTKEY|SYSRESETREQ)
 
 // fast read/write variables
 int Areg = 0;
@@ -222,6 +227,7 @@ void loop() {
   }
   if(count_1 >= 30){
     count_1++;
+    maxPos = v_init;
     nextSweep = true;
   }
   thresholdCount = 0;
@@ -235,7 +241,7 @@ void loop() {
       writeDAC16fast(v_init);
       analogWrite(DAC1, out_2);
       shiftedOutput = out_2 - 2048; 
-      threshold_1 = (2800 - 2048); 
+      threshold_1 = (0.9*maxPos - 2048); 
       if((thresholdCount < 30) && (shiftedOutput > threshold_1 - 5) && (shiftedOutput < threshold_1 + 5) && (v_init > 15000 + 500) && (v_init < 32768 - 500)){ 
         thresholdCount++;
         samples.add(v_init);
@@ -305,6 +311,46 @@ void loop() {
     
     writeDAC16fast(v_initLock);
     analogWrite(DAC0, error + 2048);
+
+    //---------------------Re-locking---------------------//
+    if(lockCount < 5000){
+      v_initLockTotal = v_initLockTotal + v_initLockPrev;
+      errorTotal = errorTotal + errorPrev; 
+   
+    }
+
+    errorPrev = error;
+    v_initLockPrev = v_initLock;
+
+    if(lockCount == 5000){
+      startLockCount++;
+      relockCount++;
+
+      v_initLockAvg = v_initLockTotal / lockCount;
+      errorAvg = errorTotal / lockCount;
+ 
+      Current.add(v_initLockAvg);
+      minCurrent = Current.getLowest();
+//Serial.print(minCurrent); Serial.print(" min "); Serial.print('\n');
+      maxCurrent = Current.getHighest();
+//Serial.print(maxCurrent); Serial.print(" max "); Serial.print('\n');
+      diffCurrent = abs(maxCurrent - minCurrent);
+
+      Serial.print(diffCurrent); Serial.print(" D "); Serial.print('\n');
+
+      sizeCurrent = Current.getSize();
+
+      if(diffCurrent > 400 && sizeCurrent == 10 ){ //&& sizeCurrent == 10
+//        digitalWrite(52, HIGH);
+      delay(1000);
+      REQUEST_EXTERNAL_RESET;
+      }
+      lockCount = 0;
+      v_initLockAvg = 0;
+      errorAvg = 0;
+      errorTotal = 0;
+      v_initLockTotal = 0;
+    }
 
     lockCount++;  
 
